@@ -1,0 +1,19 @@
+: Clean & Conventional (Recommended)
+> feat(auth): add Authentication Orchestrator for Dabelstech identity flow
+> Implements the primary auth routing logic for Dabelstech's identity system. The orchestrator determines the explicit sign-in path and returns one of the required path states (AUTHENTICATE_WITH_PASSKEY, CREATE_NEW_PASSKEY, REBIND_PASSKEY, AUTHENTICATE_WITH_PASSWORD, ROUTE_TO_ENTERPRISE_IDP, or PASSWORD_POLICY_FAILURE).
+> 
+Option 2: Short & Direct
+> feat(auth): implement identity sign-in routing orchestrator
+> Directs Dabelstech sign-in flows to Passkey, Password, Enterprise IdP, or Policy Failure paths based on input credentials and account state.
+> 
+Option 3: Detailed with Enum/State List
+> feat(identity): add sign-in path Orchestrator
+> Introduces the core decision logic for Dabelstech identity sign-in paths.
+> Enforces exact path resolution outputs:
+>  * AUTHENTICATE_WITH_PASSKEY
+>  * CREATE_NEW_PASSKEY
+>  * REBIND_PASSKEY
+>  * AUTHENTICATE_WITH_PASSWORD
+>  * ROUTE_TO_ENTERPRISE_IDP
+>  * PASSWORD_POLICY_FAILURE
+> 
