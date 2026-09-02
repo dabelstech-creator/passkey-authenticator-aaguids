@@ -1,0 +1,151 @@
+version: 2.1
+
+# Optimized for a JSON data repository with no build toolchain.
+# Single small-class job keeps credit cost low; pip cache avoids repeated installs.
+
+executors:
+  python-small:
+    docker:
+      - image: cimg/python:3.12
+    resource_class: small  # JSON validation needs <1 vCPU; saves ~75% credits vs medium
+
+jobs:
+  validate:
+    executor: python-small
+    steps:
+      - checkout
+
+      - restore_cache:
+          keys:
+            # Primary key: exact match on requirements + arch
+            - pip-v1-{{ arch }}-{{ checksum ".circleci/requirements.txt" }}
+            # Fallback: reuse any prior install on this arch (pip still skips installed pkgs)
+            - pip-v1-{{ arch }}-
+
+      - run:
+          name: Install validation dependencies
+          command: pip install --quiet -r .circleci/requirements.txt
+
+      - save_cache:
+          key: pip-v1-{{ arch }}-{{ checksum ".circleci/requirements.txt" }}
+          paths:
+            - ~/.cache/pip
+
+      - run:
+          name: Validate JSON syntax
+          command: |
+            # aaguid.json is the hand-curated file; combined_aaguid.json is generated
+            python3 -m json.tool aaguid.json > /dev/null && echo "  OK aaguid.json"
+            python3 -m json.tool combined_aaguid.json > /dev/null && echo "  OK combined_aaguid.json"
+
+      - run:
+          name: Validate schema conformance
+          command: |
+            python3 << 'EOF'
+            import json, jsonschema, sys
+
+            with open('aaguid.json.schema') as f:
+                schema = json.load(f)
+            with open('aaguid.json') as f:
+                data = json.load(f)
+
+            try:
+                jsonschema.validate(data, schema)
+                print(f"  OK {len(data)} entries pass schema validation")
+            except jsonschema.ValidationError as e:
+                path = " -> ".join(str(p) for p in e.absolute_path)
+                print(f"  FAIL [{path}]: {e.message}")
+                sys.exit(1)
+            EOF
+
+      - run:
+          name: Validate AAGUID key format (lowercase UUID)
+          command: |
+            python3 << 'EOF'
+            import json, re, sys
+
+            UUID_RE = re.compile(
+                r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+            )
+            with open('aaguid.json') as f:
+                data = json.load(f)
+
+            bad = [k for k in data if not UUID_RE.match(k)]
+            if bad:
+                print("  FAIL — keys must be lowercase UUID format:")
+                for k in bad:
+                    print(f"    {k}")
+                sys.exit(1)
+
+            print(f"  OK all {len(data)} AAGUID keys are valid lowercase UUIDs")
+            EOF
+
+      - run:
+          name: Detect duplicate AAGUID keys
+          command: |
+            python3 << 'EOF'
+            import re, sys
+
+            # json.loads silently drops duplicates; scan raw text to catch them
+            text = open('aaguid.json').read()
+            keys = re.findall(
+                r'"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"',
+                text
+            )
+            seen, dupes = set(), []
+            for k in keys:
+                if k in seen:
+                    dupes.append(k)
+                seen.add(k)
+
+            if dupes:
+                print("  FAIL — duplicate AAGUID keys found:")
+                for k in dupes:
+                    print(f"    {k}")
+                sys.exit(1)
+
+            print(f"  OK no duplicates among {len(keys)} keys")
+            EOF
+
+      - run:
+          name: Validate icon data URIs
+          command: |
+            python3 << 'EOF'
+            import json, re, base64, sys
+
+            DATA_URI_RE = re.compile(r'^data:image/svg\+xml;base64,(.+)$')
+            with open('aaguid.json') as f:
+                data = json.load(f)
+
+            errors = []
+            icon_count = 0
+            for aaguid, entry in data.items():
+                for field in ('icon_light', 'icon_dark'):
+                    val = entry.get(field)
+                    if val is None:
+                        continue
+                    icon_count += 1
+                    m = DATA_URI_RE.match(val)
+                    if not m:
+                        errors.append(f"{aaguid}.{field}: not a valid SVG data URI")
+                        continue
+                    try:
+                        decoded = base64.b64decode(m.group(1))
+                        if b'<svg' not in decoded.lower():
+                            errors.append(f"{aaguid}.{field}: decoded payload lacks <svg> element")
+                    except Exception as ex:
+                        errors.append(f"{aaguid}.{field}: base64 decode error — {ex}")
+
+            if errors:
+                print("  FAIL — icon validation errors:")
+                for e in errors:
+                    print(f"    {e}")
+                sys.exit(1)
+
+            print(f"  OK {icon_count} icon fields pass format and content checks")
+            EOF
+
+workflows:
+  validate:
+    jobs:
+      - validate
